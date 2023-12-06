@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: rtpengine mailing list
+    url: https://groups.google.com/g/rtpengine
+    about: The rtpengine GitHub issue tracker is not a support forum. Use the mailing list instead.
