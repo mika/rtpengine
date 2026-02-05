@@ -80,11 +80,52 @@ jobs:
     needs: build-debian
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           name: packages
           path: packages
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find the previous mr* tag
+          CURRENT_TAG="${{ github.ref_name }}"
+          PREVIOUS_TAG=$(git tag --list 'mr*' --sort=-version:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1)
+
+          if [ "$PREVIOUS_TAG" = "$CURRENT_TAG" ] || [ -z "$PREVIOUS_TAG" ]; then
+            # No previous tag found, use first commit
+            RANGE="$CURRENT_TAG"
+          else
+            RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
+          fi
+
+          echo "Generating changelog for range: $RANGE"
+
+          # Generate changelog grouped by author
+          {
+            echo "## Changes in ${CURRENT_TAG}"
+            echo ""
+            if [ "$RANGE" != "$CURRENT_TAG" ]; then
+              echo "Changes since ${PREVIOUS_TAG}:"
+              echo ""
+            fi
+
+            # Get unique authors
+            git log --format='%aN' "$RANGE" 2>/dev/null | sort -u | while read -r author; do
+              echo "### $author"
+              echo ""
+              git log --format='* [%h] %s' --author="$author" "$RANGE" 2>/dev/null
+              echo ""
+            done
+          } > release_notes.md
+
+          cat release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -92,7 +133,7 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: release_notes.md
           files: |
             packages/*.deb
             packages/*.tar.*
