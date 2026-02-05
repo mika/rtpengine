@@ -1,0 +1,132 @@
+name: package-build
+on:
+  pull_request:
+  push:
+    tags:
+      - 'mr*'
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+concurrency:
+  group: "${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  build-debian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: "Update changelog"
+        run: |
+          set -ex
+          OLD_VERSION=$(dpkg-parsechangelog -SVersion)
+          SOURCE=$(dpkg-parsechangelog -SSource)
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION_SUFFIX="+gh"
+          else
+            VERSION_SUFFIX="+autobuild${GITHUB_RUN_NUMBER}"
+          fi
+          cat > debian/changelog <<EOT
+          ${SOURCE} (${OLD_VERSION}${VERSION_SUFFIX}) UNRELEASED; urgency=medium
+
+            * Automated Build
+
+           -- Automated Build <builder@localhost>  $(date -R)
+          EOT
+      - uses: jtdor/build-deb-action@v1
+      - name: Archive build result
+        uses: actions/upload-artifact@v6
+        with:
+          name: packages
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            debian/artifacts/*.deb
+            debian/artifacts/*.tar.*
+      - name: Comment PR with artifact link
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const runId = context.runId;
+            const repoOwner = context.repo.owner;
+            const repoName = context.repo.repo;
+
+            // Get the artifact download URL
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: repoOwner,
+              repo: repoName,
+              run_id: runId
+            });
+
+            const packagesArtifact = artifacts.data.artifacts.find(artifact => artifact.name === 'packages');
+            if (!packagesArtifact) {
+              console.log('No packages artifact found');
+              return;
+            }
+
+            const artifactUrl = `https://github.com/${repoOwner}/${repoName}/actions/runs/${runId}/artifacts/${packagesArtifact.id}`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `📦 Built Debian packages are ready! [Download here](${artifactUrl}).`
+            });
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/mr')
+    needs: build-debian
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: packages
+          path: packages
+
+      - name: Generate changelog
+        run: |
+          # Find the previous mr* tag
+          CURRENT_TAG="${{ github.ref_name }}"
+          PREVIOUS_TAG=$(git tag --list 'mr*' --sort=-version:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1)
+
+          if [ "$PREVIOUS_TAG" = "$CURRENT_TAG" ] || [ -z "$PREVIOUS_TAG" ]; then
+            RANGE="$CURRENT_TAG"
+          else
+            RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
+          fi
+
+          echo "Generating changelog for range: $RANGE"
+
+          # Generate changelog grouped by author
+          echo "## Changes in ${CURRENT_TAG}" > release_notes.md
+          echo "" >> release_notes.md
+          if [ "$RANGE" != "$CURRENT_TAG" ]; then
+            echo "Changes since ${PREVIOUS_TAG}:" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+
+          git log --format='%aN' "$RANGE" | sort -u | while IFS= read -r author; do
+            echo "### $author" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --format='* [%h] %s' --author="$author" "$RANGE" >> release_notes.md
+            echo "" >> release_notes.md
+          done
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: |
+            packages/*.deb
+            packages/*.tar.*
