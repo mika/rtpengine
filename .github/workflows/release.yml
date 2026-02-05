@@ -3,15 +3,16 @@ on:
   workflow_run:
     workflows: [Debian package build]
     types: [completed]
-    branches-ignore:
-      - '**'
-    tags:
-      - 'mr*'
 permissions:
   contents: write
 jobs:
   release:
-    if: github.event.workflow_run.conclusion == 'success'
+    # Only run for successful tag pushes starting with 'mr'
+    # (package-build.yml only triggers 'push' events for tags, not branches)
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'mr')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
