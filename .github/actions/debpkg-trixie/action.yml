@@ -1,0 +1,6 @@
+name: "Build Docker image based on Debian/trixie"
+description: "Build Docker image based on Debian/trixie"
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'

@@ -7,26 +7,26 @@ on:
     - cron: '0 8 * * *'
 
 jobs:
-  build-deb-bookworm:
+  build-deb-trixie:
     if: github.event_name != 'schedule' || github.repository == 'sipwise/rtpengine'
     runs-on: ubuntu-latest
-    name: Debian pipeline for bookworm
+    name: Debian pipeline for trixie
 
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Execute Docker debpkg action
-      uses: ./.github/actions/debpkg-bookworm
+      uses: ./.github/actions/debpkg-trixie
 
     - name: Store Debian package artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Debian binary package files for bookworm
         path: '*.deb'
 
     - name: Store Debian package build info
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Debian buildinfo file for bookworm
         path: '*.buildinfo'
@@ -38,19 +38,19 @@ jobs:
 
     steps:
     - name: Checkout source
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Execute Docker debpkg action
       uses: ./.github/actions/debpkg-sid
 
     - name: Store Debian package artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Debian binary package files for sid
         path: '*.deb'
 
     - name: Store Debian package build info
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: Debian buildinfo file for sid
         path: '*.buildinfo'
