@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'mr*'
+  schedule:
+    - cron: '0 8 * * *'
 permissions:
   actions: read
   contents: write
@@ -13,10 +15,14 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build-debian:
+    if: github.event_name != 'schedule' || github.repository == 'sipwise/rtpengine'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dist: [trixie, sid]
     steps:
       - uses: actions/checkout@v6
-      - name: "Update changelog"
+      - name: Update changelog
         run: |
           set -ex
           OLD_VERSION=$(dpkg-parsechangelog -SVersion)
@@ -34,17 +40,26 @@ jobs:
            -- Automated Build <builder@localhost>  $(date -R)
           EOT
       - uses: jtdor/build-deb-action@v1
+        with:
+          docker-image: debian:${{ matrix.dist }}
+          buildpackage-opts: -Ppkg.ngcp-rtpengine.nobcg729
       - name: Archive build result
         uses: actions/upload-artifact@v6
         with:
-          name: packages
+          name: packages-${{ matrix.dist }}
           if-no-files-found: error
           retention-days: 14
           path: |
             debian/artifacts/*.deb
             debian/artifacts/*.tar.*
-      - name: Comment PR with artifact link
-        if: github.event_name == 'pull_request'
+            debian/artifacts/*.buildinfo
+
+  comment-pr:
+    if: github.event_name == 'pull_request'
+    needs: build-debian
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment PR with artifact links
         continue-on-error: true
         uses: actions/github-script@v8
         with:
@@ -53,27 +68,25 @@ jobs:
             const repoOwner = context.repo.owner;
             const repoName = context.repo.repo;
 
-            // Get the artifact download URL
             const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
               owner: repoOwner,
               repo: repoName,
               run_id: runId
             });
 
-            const packagesArtifact = artifacts.data.artifacts.find(artifact => artifact.name === 'packages');
-            if (!packagesArtifact) {
-              console.log('No packages artifact found');
-              return;
+            const links = artifacts.data.artifacts
+              .filter(a => a.name.startsWith('packages-'))
+              .map(a => `- [${a.name}](https://github.com/${repoOwner}/${repoName}/actions/runs/${runId}/artifacts/${a.id})`)
+              .join('\n');
+
+            if (links) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: repoOwner,
+                repo: repoName,
+                body: `📦 Built Debian packages are ready!\n\n${links}`
+              });
             }
-
-            const artifactUrl = `https://github.com/${repoOwner}/${repoName}/actions/runs/${runId}/artifacts/${packagesArtifact.id}`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `📦 Built Debian packages are ready! [Download here](${artifactUrl}).`
-            });
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/mr')
@@ -85,15 +98,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download build artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v6
         with:
-          name: packages
           path: packages
+          pattern: packages-*
+          merge-multiple: true
 
       - name: Generate changelog
         run: |
-          # Find the previous mr* tag
           CURRENT_TAG="${{ github.ref_name }}"
           PREVIOUS_TAG=$(git tag --list 'mr*' --sort=-version:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1)
 
@@ -105,7 +118,6 @@ jobs:
 
           echo "Generating changelog for range: $RANGE"
 
-          # Generate changelog grouped by author
           echo "## Changes in ${CURRENT_TAG}" > release_notes.md
           echo "" >> release_notes.md
           if [ "$RANGE" != "$CURRENT_TAG" ]; then
