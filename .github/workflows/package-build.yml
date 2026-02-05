@@ -6,7 +6,7 @@ on:
       - 'mr*'
 permissions:
   actions: read
-  contents: read
+  contents: write
   pull-requests: write
 concurrency:
   group: "${{ github.ref }}"
@@ -74,3 +74,25 @@ jobs:
               repo: context.repo.repo,
               body: `📦 Built packages are ready! [Download here](${artifactUrl}).`
             });
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/mr')
+    needs: build-debian
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: packages
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            packages/*.deb
+            packages/*.tar.*
